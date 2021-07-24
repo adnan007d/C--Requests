@@ -8,7 +8,6 @@
 
 #include <string>
 #include <iostream>
-#include <map>
 #include <regex>
 #include <sys/select.h>
 
@@ -45,7 +44,7 @@ void Requests ::setup()
         print_error("Connection Failed");
 }
 
-void Requests ::get(const char *domain)
+void Requests ::get(const char *domain, std::map<std ::string, std ::string> request_headers)
 {
 
     clear();
@@ -57,7 +56,19 @@ void Requests ::get(const char *domain)
 
     _headers += "GET " + path + " HTTP/1.1\r\n";
 
-    _headers += "HOST: " + std ::string(host) + "\r\n\r\n";
+    _headers += "HOST: " + std ::string(host) + "\r\n";
+
+    for (auto &x : request_headers)
+    {
+        // Trimming the value part of headers
+        // Really some users are dumb smh
+        // Or some are very smart to use it and break stuff
+        trim(x.second);
+
+        _headers += x.first + ": " + x.second + "\r\n";
+    }
+
+    _headers += "\r\n"; // Requests end with \r\n\r\n
 
     // printf("%s\n\n", _headers.c_str());
     send(sock, _headers.c_str(), _headers.size(), 0);
@@ -99,15 +110,26 @@ void Requests ::get(const char *domain)
     // Trimming the header therefore ltrim()
     ltrim(response);
 
+    // std ::cout << response << std ::endl;
+
     // Splitting header and response
-    resplit(response, "\r\n\r\n");
+    std ::vector<std ::string> parts = resplit(response, "\r\n\r\n");
 
+    if (parts.size() != 2)
+        print_error("Response split failed");
+
+    std ::string response_headers = parts.at(0);
+    response = parts.at(1);
+
+    rtrim(response_headers);
+
+    // std ::cout << response_headers << std ::endl;
     //extract status code
-
-    extract_status_code(headers);
+    extract_status_code(response_headers);
 
     // Trimming the right of header as left was trimmed before
-    rtrim(headers);
+
+    headers = format_headers(response_headers);
 
     // Trimming everything before < (start) and after > (end)
     html_trim(response);
@@ -122,9 +144,8 @@ std::string Requests ::get_response()
     return response;
 }
 
-std ::string Requests ::get_headers()
+std ::map<std ::string, std ::string> Requests ::get_headers()
 {
-    headers.shrink_to_fit();
     return headers;
 }
 
@@ -208,16 +229,24 @@ void Requests ::substr(const char *str, char *s, int start, int length)
 }
 
 // Works like a fokin charm
-void Requests ::resplit(const std ::string &s, std::string reg_str)
+std ::vector<std ::string> Requests ::resplit(const std ::string &s, std::string reg_str)
 {
+    std ::vector<std ::string> parts;
     std ::regex re(reg_str);
 
     std ::sregex_token_iterator iter(s.begin(), s.end(), re, -1);
     std ::sregex_token_iterator end;
 
-    headers = *iter;
-    ++iter;
-    response = *iter;
+    while (iter != end)
+    {
+        parts.push_back(*iter);
+        ++iter;
+    }
+
+    // headers = *iter;
+    // ++iter;
+    // response = *iter;
+    return parts;
 }
 
 void Requests ::extract_status_code(std ::string &headers)
@@ -229,12 +258,10 @@ void Requests ::extract_status_code(std ::string &headers)
 
     while (*i != ' ')
     {
-        headers.erase(i);
         ++i;
     }
 
-    // trimming the space
-    headers.erase(i);
+    ++i;
 
     // extracting the status code in string format
     while (*i != ' ')
@@ -245,14 +272,67 @@ void Requests ::extract_status_code(std ::string &headers)
 
     // std ::cout << temp_code_string << std ::endl;
     status_code = atoi(temp_code_string.c_str());
+}
 
-    // removing the whole line
+std ::map<std ::string, std ::string> Requests ::format_headers(std ::string &headers)
+{
+    // Removing the first line which contains the protocal and status code
+    std ::string ::iterator i = headers.begin();
+
     while (*i != '\n')
     {
         headers.erase(i);
         ++i;
     }
     headers.erase(i);
+
+    std ::vector<std ::string> _headers = resplit(headers, "\r\n");
+    // std ::cout << _headers.size() << std ::endl;
+
+    std ::map<std ::string, std::string> real_headers;
+
+    // Now extracting single headers and converting it into a map
+    for (auto header : _headers)
+    {
+        std ::vector<std ::string> _header = resplit(header, ": ");
+
+        std ::string key = "";
+
+        // Doing this because there might be a `: ` in value and it will be splitted too so we will join them
+        std ::string value = "";
+
+        // Setting the first element as key
+        key = _header.at(0);
+
+        if (_header.size() > 1)
+        {
+            // Poping the first element as we would want to join the vector if the size is greater than 1
+            _header.erase(_header.begin());
+            if (_header.size() > 1)
+                value = join(_header, ": ");
+            else
+                value = _header.at(0);
+        }
+        else // If for some reason there is no value for key
+            value = "0";
+
+        real_headers[key] = value;
+    }
+    return real_headers;
+}
+
+std ::string Requests ::join(std ::vector<std ::string> vec, std ::string sep)
+{
+    std ::cout << "Someone called me: " << vec.at(0) << std ::endl;
+    std ::string s = "";
+    for (auto v : vec)
+    {
+        s += v;
+        if (!s.empty())
+            s += sep;
+    }
+
+    return s;
 }
 
 void Requests ::trim(std ::string &s)
@@ -263,13 +343,8 @@ void Requests ::trim(std ::string &s)
 
 void Requests ::ltrim(std ::string &s)
 {
-    std ::string ::iterator i = s.begin();
-
-    while (check_trim(*i))
-    {
-        s.erase(i);
-        ++i;
-    }
+    while (check_trim(*s.begin()))
+        s.erase(s.begin());
 }
 
 void Requests ::rtrim(std ::string &s)
@@ -286,7 +361,7 @@ void Requests ::rtrim(std ::string &s)
 
 bool Requests ::check_trim(char s)
 {
-    if (s == '\0' || s == '\r' || s == '\n' || s == ' ')
+    if (s == '\r' || s == '\n' || s == ' ' || s == '\0')
         return true;
     return false;
 }

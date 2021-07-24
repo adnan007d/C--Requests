@@ -5,6 +5,8 @@
 
 #include <string>
 #include <regex>
+#include <vector>
+#include <map>
 
 #define PORT 80
 #define BUFFER 4096
@@ -22,11 +24,12 @@ private:
     char ip[15]; // MAX LENGTH OF IP ADDRESS
 
     std ::string response = "";
-    std ::string headers = "";
+    std ::map<std::string, std ::string> headers;
     std ::string path = "/"; // default path will be the root directory
 
-    void resplit(const std ::string &, std ::string);
+    std::vector<std ::string> resplit(const std ::string &, std ::string);
     void extract_status_code(std ::string &);
+    std::map<std ::string, std ::string> format_headers(std ::string &);
 
 public:
     Requests()
@@ -51,16 +54,17 @@ public:
     void html_trim(std ::string &);
     void html_ltrim(std ::string &);
     void html_rtrim(std ::string &);
+    std ::string join(std ::vector<std ::string>, std ::string);
     bool check_trim(char);
     void clear();
 
     // response data
     std::string get_response();
-    std ::string get_headers();
+    std ::map<std ::string, std ::string> get_headers();
     int get_status_code();
 
     // http methods
-    void get(const char *domain);
+    void get(const char *domain, std ::map<std ::string, std ::string> = {});
 };
 
 #endif // REQUESTS_HPP
