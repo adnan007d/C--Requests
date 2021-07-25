@@ -7,8 +7,22 @@
 int main()
 {
 
+    //NOTE: defaut timeout is 5 seconds
     Requests r = Requests();
-    r.get("https://www.google.com", {{"User-Agent", "C++"}});
+    try
+    {
+        std ::map<std ::string, std ::string> request_headers;
+
+        request_headers["User-Agent"] = "C++";
+        r.get("https://www.google.com", request_headers, 10);
+    }
+    catch (std ::logic_error &e) // Will implement a custom exception class later :)
+    {
+        std ::cout << e.what() << std ::endl;
+        r.clear(); // Cleanup duty
+        exit(EXIT_FAILURE);
+    }
+
     std ::string response = r.get_response();
     std ::map<std ::string, std ::string> headers = r.get_headers();
     int status_code = r.get_status_code();

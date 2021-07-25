@@ -8,14 +8,14 @@
 
 #include <string>
 #include <iostream>
+#include <chrono>
 #include <regex>
-#include <sys/select.h>
+#include <poll.h>
 
 #include "requests.hpp"
 void Requests ::clear()
 {
     valread = 0;
-    timeout = 0;
     status_code = 0;
 
     memset(buffer, 0, BUFFER);
@@ -44,7 +44,7 @@ void Requests ::setup()
         print_error("Connection Failed");
 }
 
-void Requests ::get(const char *domain, std::map<std ::string, std ::string> request_headers)
+void Requests ::get(const char *domain, std::map<std ::string, std ::string> request_headers, int timeout)
 {
 
     clear();
@@ -74,25 +74,46 @@ void Requests ::get(const char *domain, std::map<std ::string, std ::string> req
     send(sock, _headers.c_str(), _headers.size(), 0);
     memset(buffer, 0, BUFFER);
 
-    // Timeout for 5 seconds if server doesn't respond it will shutdown
-    fd_set readfds;
-    struct timeval timeout;
-    timeout.tv_sec = 5;
-    timeout.tv_usec = 0;
+    // To check if we are recieving something
+    struct pollfd fds[1];
 
-    FD_ZERO(&readfds);
-    FD_SET(sock, &readfds);
+    // int timeout = 5; // default timeout will be 5 seconds
+
+    // This is additional feature to check if the response is still empty after a given timeout
+    // This is from stackoverflow https://stackoverflow.com/questions/728068/how-to-calculate-a-time-difference-in-c
+    typedef std ::chrono ::high_resolution_clock clock_;
+    typedef std ::chrono ::duration<double, std ::ratio<1>> second_;
+    std ::chrono ::time_point<clock_> begin_time_ = clock_ ::now();
 
     while (1)
     {
+        fds[0].fd = sock;
+        fds[0].events = 0;
+        fds[0].events |= POLLIN;
 
-        int sret = select(8, &readfds, NULL, NULL, &timeout);
+        int pret = poll(fds, 1, timeout * 1000);
 
-        // printf("%d", sret);
-        if (sret == 0)
+        double diff;
+
+        if (pret == 0)
+        {
+            if (response.empty())
+                throw std ::logic_error("Timeout"); // Will implement a Exception Class
             break;
+        }
+        else if (pret == 1)
+        {
+            diff = std::chrono ::duration_cast<second_>(clock_ ::now() - begin_time_).count();
+            if (diff > timeout)
+            {
+                if (response.empty())
+                    throw std ::logic_error("Tiemout"); // Will implement a Exception Class
+                else
+                    break;
+            }
+        }
 
-        valread = recv(sock, buffer, BUFFER, 0);
+        valread = read(sock, buffer, BUFFER);
 
         // printf("%s", buffer);
         // printf("%ld", strlen(buffer));
@@ -110,8 +131,6 @@ void Requests ::get(const char *domain, std::map<std ::string, std ::string> req
     // Trimming the header therefore ltrim()
     ltrim(response);
 
-    // std ::cout << response << std ::endl;
-
     // Splitting header and response
     std ::vector<std ::string> parts = resplit(response, "\r\n\r\n");
 
@@ -121,13 +140,11 @@ void Requests ::get(const char *domain, std::map<std ::string, std ::string> req
     std ::string response_headers = parts.at(0);
     response = parts.at(1);
 
+    // Trimming the right of header as left was trimmed before
     rtrim(response_headers);
 
-    // std ::cout << response_headers << std ::endl;
     //extract status code
     extract_status_code(response_headers);
-
-    // Trimming the right of header as left was trimmed before
 
     headers = format_headers(response_headers);
 
@@ -277,14 +294,15 @@ void Requests ::extract_status_code(std ::string &headers)
 std ::map<std ::string, std ::string> Requests ::format_headers(std ::string &headers)
 {
     // Removing the first line which contains the protocal and status code
-    std ::string ::iterator i = headers.begin();
-
-    while (*i != '\n')
+    while (*headers.begin() != '\n')
     {
-        headers.erase(i);
-        ++i;
+        headers.erase(headers.begin());
     }
-    headers.erase(i);
+    headers.erase(headers.begin());
+
+    // std ::cout << headers << std ::endl;
+    // for (auto &head : headers)
+    //     std ::cout << head.first << ": " << head.second << std ::endl;
 
     std ::vector<std ::string> _headers = resplit(headers, "\r\n");
     // std ::cout << _headers.size() << std ::endl;
@@ -349,14 +367,9 @@ void Requests ::ltrim(std ::string &s)
 
 void Requests ::rtrim(std ::string &s)
 {
-    std ::string ::iterator i = s.end();
 
-    --i; // end() points to one forward so making it point at the end
-    while (check_trim(*i))
-    {
-        s.erase(i);
-        --i;
-    }
+    while (check_trim(*--s.end()))
+        s.erase(--s.end());
 }
 
 bool Requests ::check_trim(char s)

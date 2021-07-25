@@ -2,7 +2,7 @@
 #define REQUESTS_HPP
 
 #include <arpa/inet.h>
-
+#include <unistd.h>
 #include <string>
 #include <regex>
 #include <vector>
@@ -18,7 +18,6 @@ private:
     int valread;
     struct sockaddr_in serv_aaddr;
     char host[50];
-    int timeout;
     int status_code;
     char buffer[BUFFER];
     char ip[15]; // MAX LENGTH OF IP ADDRESS
@@ -64,7 +63,7 @@ public:
     int get_status_code();
 
     // http methods
-    void get(const char *domain, std ::map<std ::string, std ::string> = {});
+    void get(const char *, std ::map<std ::string, std ::string> = {}, int = 5); // default timeout will be 5
 };
 
 #endif // REQUESTS_HPP

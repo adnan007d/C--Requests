@@ -1,4 +1,5 @@
 CC=g++
+# CO=-std=c++11
 
 all:main.o requests.o
 	$(CC) requests.o main.o -o main
@@ -7,7 +8,7 @@ main.o: main.cpp
 	$(CC) -c main.cpp
 
 requests.o: requests.cpp requests.hpp
-	$(CC) -c requests.cpp requests.hpp 
+	$(CC) -c requests.cpp requests.hpp  
 clean:
 	rm -rf main
 
