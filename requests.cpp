@@ -22,6 +22,8 @@ void Requests ::clear()
     memset(ip, 0, 15);
     memset(host, 0, 50);
 
+    content_type.clear();
+    raw_response.clear();
     response.clear();
     headers.clear();
     path = "/";
@@ -42,6 +44,7 @@ void Requests ::setup()
 
     if (connect(sock, (struct sockaddr *)&serv_aaddr, sizeof(serv_aaddr)) < 0)
         print_error("Connection Failed");
+    set_content_type();
 }
 
 void Requests ::get(const char *domain, std::map<std ::string, std ::string> request_headers, int timeout)
@@ -97,7 +100,7 @@ void Requests ::get(const char *domain, std::map<std ::string, std ::string> req
 
         if (pret == 0)
         {
-            if (response.empty())
+            if (raw_response.empty())
                 throw std ::logic_error("Timeout"); // Will implement a Exception Class
             break;
         }
@@ -106,7 +109,7 @@ void Requests ::get(const char *domain, std::map<std ::string, std ::string> req
             diff = std::chrono ::duration_cast<second_>(clock_ ::now() - begin_time_).count();
             if (diff > timeout)
             {
-                if (response.empty())
+                if (raw_response.empty())
                     throw std ::logic_error("Tiemout"); // Will implement a Exception Class
                 else
                     break;
@@ -118,7 +121,7 @@ void Requests ::get(const char *domain, std::map<std ::string, std ::string> req
         // printf("%s", buffer);
         // printf("%ld", strlen(buffer));
 
-        response += buffer;
+        raw_response += buffer;
         fflush(stdout);
 
         if (is_end(buffer, valread))
@@ -128,28 +131,13 @@ void Requests ::get(const char *domain, std::map<std ::string, std ::string> req
     }
     close(sock);
 
-    // Trimming the header therefore ltrim()
-    ltrim(response);
+    cook_responses();
+}
 
-    // Splitting header and response
-    std ::vector<std ::string> parts = resplit(response, "\r\n\r\n");
-
-    if (parts.size() != 2)
-        print_error("Response split failed");
-
-    std ::string response_headers = parts.at(0);
-    response = parts.at(1);
-
-    // Trimming the right of header as left was trimmed before
-    rtrim(response_headers);
-
-    //extract status code
-    extract_status_code(response_headers);
-
-    headers = format_headers(response_headers);
-
-    // Trimming everything before < (start) and after > (end)
-    html_trim(response);
+std ::string Requests ::get_raw_response()
+{
+    raw_response.shrink_to_fit();
+    return raw_response;
 }
 
 std::string Requests ::get_response()
@@ -169,6 +157,12 @@ std ::map<std ::string, std ::string> Requests ::get_headers()
 int Requests ::get_status_code()
 {
     return status_code;
+}
+
+std ::string Requests ::get_response_type()
+{
+    response_type.shrink_to_fit();
+    return response_type;
 }
 
 void Requests ::resolve_host(const char *hostname)
@@ -243,6 +237,79 @@ void Requests ::substr(const char *str, char *s, int start, int length)
     {
         s[x] = str[i];
     }
+}
+
+void Requests ::cook_responses()
+{
+    // Trimming the header therefore ltrim()
+    ltrim(raw_response);
+
+    // Splitting header and response
+    std ::vector<std ::string> parts = resplit(raw_response, "\r\n\r\n");
+
+    std ::string response_headers = "";
+    if (parts.size() == 1)
+    {
+        // This mainly occurs during permanent redirect
+        response_headers = parts.at(0);
+        response = raw_response;
+    }
+    else if (parts.size() == 2) // This is the common result
+    {
+        response_headers = parts.at(0);
+        response = parts.at(1);
+    }
+    else
+    {
+        // This when someone wants to mess with you
+        print_error("Recieved unexpected response");
+    }
+
+    // Trimming the right of header as left was trimmed before
+    rtrim(response_headers);
+
+    //extract status code
+    extract_status_code(response_headers);
+
+    headers = format_headers(response_headers);
+
+    response_type = check_response_type(headers);
+
+    if (response_type == "html")
+        // Trimming everything before < (start) and after > (end)
+        html_trim(response);
+    else if (response_type == "json")
+        json_trim(response);
+    else
+        trim(response);
+}
+
+void Requests ::set_content_type()
+{
+    content_type.insert(std ::make_pair("html", "text/html"));
+    content_type.insert(std ::make_pair("json", "application/json"));
+    content_type.insert(std ::make_pair("plain", "text/plain"));
+}
+
+std ::string Requests ::check_response_type(std ::map<std ::string, std::string> headers)
+{
+    for (auto header : content_type)
+    {
+        size_t type_len = header.second.size();
+        if (headers["Content-Type"].substr(0, type_len) == header.second)
+        {
+            return header.first;
+        }
+        // std ::cout << headers["Content-Type"].substr(0, type_len) << std ::endl;
+    }
+    std ::string t = "";
+    for (auto x : headers["Content-Type"])
+    {
+        if (t == ";")
+            break;
+        t += x;
+    }
+    return t;
 }
 
 // Works like a fokin charm
@@ -401,5 +468,29 @@ void Requests ::html_rtrim(std ::string &s)
     {
         s.erase(--s.end());
         html_rtrim(s);
+    }
+}
+
+void Requests ::json_trim(std ::string &s)
+{
+    json_ltrim(s);
+    json_rtrim(s);
+}
+
+void Requests ::json_ltrim(std ::string &s)
+{
+    if (*s.begin() != '{')
+    {
+        s.erase(s.begin());
+        json_ltrim(s);
+    }
+}
+
+void Requests ::json_rtrim(std ::string &s)
+{
+    if (*--s.end() != '}')
+    {
+        s.erase(--s.end());
+        json_rtrim(s);
     }
 }

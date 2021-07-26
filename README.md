@@ -6,12 +6,10 @@
   
 ## Known bugs
 > - Need to use url encoding for path currently it will not work if you pass path which is not encoded. <br />
-> - Works only for html responses.
 
 ## TODO
-> - Adding a variable that holds the type of response, (html, text, json)
-> - Parsing text and json response
 > - URL encoding for path of passed url
+> - Custom Exception Class
 
 ## Documentation
 ### GET
@@ -27,6 +25,8 @@
 > std::string get_response();
 > std ::map<std ::string, std ::string> get_headers();
 > int get_status_code();
+> std ::string get_raw_response();
+> std ::string get_response_type(); 
 > ```
 
 ### Some utility functions (If you want to use it)

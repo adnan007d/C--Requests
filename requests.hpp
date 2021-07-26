@@ -22,13 +22,20 @@ private:
     char buffer[BUFFER];
     char ip[15]; // MAX LENGTH OF IP ADDRESS
 
+    std ::map<std ::string, std ::string> content_type;
+
+    std ::string raw_response = "";
     std ::string response = "";
     std ::map<std::string, std ::string> headers;
     std ::string path = "/"; // default path will be the root directory
+    std ::string response_type;
 
     std::vector<std ::string> resplit(const std ::string &, std ::string);
     void extract_status_code(std ::string &);
     std::map<std ::string, std ::string> format_headers(std ::string &);
+    void set_content_type();
+    void cook_responses();
+    std ::string check_response_type(std ::map<std ::string, std::string>);
 
 public:
     Requests()
@@ -53,14 +60,20 @@ public:
     void html_trim(std ::string &);
     void html_ltrim(std ::string &);
     void html_rtrim(std ::string &);
+    void json_trim(std ::string &);
+    void json_ltrim(std ::string &);
+    void json_rtrim(std ::string &);
+
     std ::string join(std ::vector<std ::string>, std ::string);
     bool check_trim(char);
     void clear();
 
     // response data
+    std ::string get_raw_response();
     std::string get_response();
     std ::map<std ::string, std ::string> get_headers();
     int get_status_code();
+    std ::string get_response_type();
 
     // http methods
     void get(const char *, std ::map<std ::string, std ::string> = {}, int = 5); // default timeout will be 5
