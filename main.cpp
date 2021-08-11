@@ -6,20 +6,28 @@
 // MAIN FUNCTION
 int main()
 {
+    std ::string url;
+    url = "https://www.httpbin.org/headers";
+    std ::map<std ::string, std ::string> request_headers;
+    request_headers["User-Agent"] = "C++";
 
     //NOTE: defaut timeout is 5 seconds
-    Requests r = Requests();
+    requests ::Requests r = requests ::Requests();
+
     try
     {
-        std ::map<std ::string, std ::string> request_headers;
-
-        request_headers["User-Agent"] = "C++";
-        r.get("https://www.httpbin.org/headers", request_headers, 3);
+        r.get(url, request_headers);
     }
-    catch (std ::logic_error &e) // Will implement a custom exception class later :)
+    catch (requests ::timeout_error &e) // Will implement a custom exception class later :)
     {
         std ::cout << e.what() << std ::endl;
         r.clear(); // Cleanup duty
+        exit(EXIT_FAILURE);
+    }
+    catch (std ::exception &e) // catching all exceptions
+    {
+        std ::cout << e.what() << std ::endl;
+        r.clear();
         exit(EXIT_FAILURE);
     }
 
@@ -29,10 +37,7 @@ int main()
     int status_code = r.get_status_code();
     std ::string response_type = r.get_response_type();
 
-    // std ::cout << raw_response << std ::endl;
-    // Use either one of them doesn't matter or it does ?
     std ::cout << response << std ::endl;
-    // printf("%s", response.c_str());
 
     for (auto header : headers)
         std ::cout << header.first << ": " << header.second << std ::endl;

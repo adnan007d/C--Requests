@@ -9,15 +9,14 @@
 
 ## TODO
 > - URL encoding for path of passed url
-> - Custom Exception Class
 
 ## Documentation
 ### GET
 >
 >```C++
->Requests :: get(const char *domain, std :: map<std :: string, std :: string> >request_headers = {}, int timeout = 5)
+>requests :: Requests :: get(const char *domain, std :: map<std :: string, std :: string> >request_headers = {}, int timeout = 5)
 >```
-> throws an exception std :: logic_error (This is just a temporary solution, will implement a custom exception later)
+> throws an exception requests :: requests_exception see [exception](#exception) for more derived exceptions
 
 ### Methods after successful requests
 > 
@@ -29,6 +28,13 @@
 > std ::string get_response_type(); 
 > ```
 
+### Exception
+> 
+> ```C++
+> requests :: requests_exception
+> requests :: timeout_error
+> requests :: connection_error
+> ```
 ### Some utility functions (If you want to use it)
 >
 > ```C++
@@ -55,7 +61,7 @@
 int main()
 {
 
-    Requests r = Requests();
+    requests :: Requests r = requests :: Requests();
     r.get("https://www.google.com");
 
     // Currently these are the methods supported after a succesful request
@@ -83,7 +89,7 @@ int main()
 int main()
 {
 
-    Requests r = Requests();
+    requests :: Requests r = requests :: Requests();
 
     std :: map<std :: string, std :: string> request_headers;
 
@@ -115,7 +121,7 @@ int main()
 int main()
 {
 
-    Requests r = Requests();
+    requests :: Requests r = requests :: Requests();
 
     try
     {
@@ -123,7 +129,7 @@ int main()
         // You can also pass custom headers in it too if you want
         r.get("https://www.google.com/Hello World", {}, 10);
     }
-    catch(std :: logic_error &e) // Will implement a custom exception class later
+    catch(requests :: timeout_error &e) // Will implement a custom exception class later
     {
         std :: cout << e.what() << std :: endl;
         r.clear() // Clean Up 

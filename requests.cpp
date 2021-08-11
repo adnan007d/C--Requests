@@ -13,7 +13,7 @@
 #include <poll.h>
 
 #include "requests.hpp"
-void Requests ::clear()
+void requests ::Requests ::clear()
 {
     valread = 0;
     status_code = 0;
@@ -31,27 +31,27 @@ void Requests ::clear()
     close(sock);
 }
 
-void Requests ::setup()
+void requests ::Requests ::setup()
 {
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-        print_error("Socket Creation Error");
+        throw requests ::connection_error("Socket Creation Error");
 
     serv_aaddr.sin_family = AF_INET;
     serv_aaddr.sin_port = htons(PORT);
 
     if ((inet_pton(AF_INET, ip, &serv_aaddr.sin_addr)) < 0)
-        print_error("Invalid Address");
+        throw requests ::connection_error("Invalid Address");
 
     if (connect(sock, (struct sockaddr *)&serv_aaddr, sizeof(serv_aaddr)) < 0)
-        print_error("Connection Failed");
+        throw requests ::connection_error("Connection Failed");
     set_content_type();
 }
 
-void Requests ::get(const char *domain, std::map<std ::string, std ::string> request_headers, int timeout)
+void requests ::Requests ::get(std ::string domain, std::map<std ::string, std ::string> request_headers, int timeout)
 {
 
     clear();
-    resolve_host(domain);
+    resolve_host(domain.c_str());
     setup();
 
     // Setting up headers
@@ -101,7 +101,7 @@ void Requests ::get(const char *domain, std::map<std ::string, std ::string> req
         if (pret == 0)
         {
             if (raw_response.empty())
-                throw std ::logic_error("Timeout"); // Will implement a Exception Class
+                throw requests ::timeout_error("Timeout"); // Will implement a Exception Class
             break;
         }
         else if (pret == 1)
@@ -134,13 +134,13 @@ void Requests ::get(const char *domain, std::map<std ::string, std ::string> req
     cook_responses();
 }
 
-std ::string Requests ::get_raw_response()
+std ::string requests ::Requests ::get_raw_response()
 {
     raw_response.shrink_to_fit();
     return raw_response;
 }
 
-std::string Requests ::get_response()
+std::string requests ::Requests ::get_response()
 {
     // Should I do this ?
     // I am not sure but I think it will help to save space
@@ -149,25 +149,24 @@ std::string Requests ::get_response()
     return response;
 }
 
-std ::map<std ::string, std ::string> Requests ::get_headers()
+std ::map<std ::string, std ::string> requests ::Requests ::get_headers()
 {
     return headers;
 }
 
-int Requests ::get_status_code()
+int requests ::Requests ::get_status_code()
 {
     return status_code;
 }
 
-std ::string Requests ::get_response_type()
+std ::string requests ::Requests ::get_response_type()
 {
     response_type.shrink_to_fit();
     return response_type;
 }
 
-void Requests ::resolve_host(const char *hostname)
+void requests ::Requests ::resolve_host(const char *hostname)
 {
-
     // Removing the protocal string (http, https, etc)
     std ::regex e("^(.*://)");
     std ::string __host = std ::regex_replace(hostname, e, "");
@@ -197,7 +196,7 @@ void Requests ::resolve_host(const char *hostname)
     // If this returns NULL means No Internet or invalid domain
     if ((he = gethostbyname(host)) == NULL)
     {
-        print_error("Couldn't resolve host");
+        throw requests ::connection_error("Couldn't resolve host");
     }
 
     // Extracting the array of ip address from hostent struct
@@ -211,13 +210,13 @@ void Requests ::resolve_host(const char *hostname)
     }
 }
 
-void Requests::print_error(const char *error)
+void requests ::Requests::print_error(const char *error)
 {
     fprintf(stderr, "%s\n", error);
     exit(EXIT_FAILURE);
 }
 
-int Requests::is_end(const char *buff, const int size)
+int requests ::Requests::is_end(const char *buff, const int size)
 {
     // Checking if end of the request which is \r\n\r\n
     if (buff[size - 1] == '\n' && buff[size - 2] == '\r' && buff[size - 3] == '\n' && buff[size - 4] == '\r')
@@ -226,7 +225,7 @@ int Requests::is_end(const char *buff, const int size)
     return 0;
 }
 
-void Requests ::substr(const char *str, char *s, int start, int length)
+void requests ::Requests ::substr(const char *str, char *s, int start, int length)
 {
     int str_len = strlen(str);
     if (!length)
@@ -239,7 +238,7 @@ void Requests ::substr(const char *str, char *s, int start, int length)
     }
 }
 
-void Requests ::cook_responses()
+void requests ::Requests ::cook_responses()
 {
     // Trimming the header therefore ltrim()
     ltrim(raw_response);
@@ -262,7 +261,7 @@ void Requests ::cook_responses()
     else
     {
         // This when someone wants to mess with you
-        print_error("Recieved unexpected response");
+        throw requests ::requests_exception("Recieved unexpected response");
     }
 
     // Trimming the right of header as left was trimmed before
@@ -284,14 +283,14 @@ void Requests ::cook_responses()
         trim(response);
 }
 
-void Requests ::set_content_type()
+void requests ::Requests ::set_content_type()
 {
     content_type.insert(std ::make_pair("html", "text/html"));
     content_type.insert(std ::make_pair("json", "application/json"));
     content_type.insert(std ::make_pair("plain", "text/plain"));
 }
 
-std ::string Requests ::check_response_type(std ::map<std ::string, std::string> headers)
+std ::string requests ::Requests ::check_response_type(std ::map<std ::string, std::string> headers)
 {
     for (auto header : content_type)
     {
@@ -313,7 +312,7 @@ std ::string Requests ::check_response_type(std ::map<std ::string, std::string>
 }
 
 // Works like a fokin charm
-std ::vector<std ::string> Requests ::resplit(const std ::string &s, std::string reg_str)
+std ::vector<std ::string> requests ::Requests ::resplit(const std ::string &s, std::string reg_str)
 {
     std ::vector<std ::string> parts;
     std ::regex re(reg_str);
@@ -333,7 +332,7 @@ std ::vector<std ::string> Requests ::resplit(const std ::string &s, std::string
     return parts;
 }
 
-void Requests ::extract_status_code(std ::string &headers)
+void requests ::Requests ::extract_status_code(std ::string &headers)
 {
 
     // This is a cheap solution
@@ -358,7 +357,7 @@ void Requests ::extract_status_code(std ::string &headers)
     status_code = atoi(temp_code_string.c_str());
 }
 
-std ::map<std ::string, std ::string> Requests ::format_headers(std ::string &headers)
+std ::map<std ::string, std ::string> requests ::Requests ::format_headers(std ::string &headers)
 {
     // Removing the first line which contains the protocal and status code
     while (*headers.begin() != '\n')
@@ -406,7 +405,7 @@ std ::map<std ::string, std ::string> Requests ::format_headers(std ::string &he
     return real_headers;
 }
 
-std ::string Requests ::join(std ::vector<std ::string> vec, std ::string sep)
+std ::string requests ::Requests ::join(std ::vector<std ::string> vec, std ::string sep)
 {
     std ::cout << "Someone called me: " << vec.at(0) << std ::endl;
     std ::string s = "";
@@ -420,40 +419,40 @@ std ::string Requests ::join(std ::vector<std ::string> vec, std ::string sep)
     return s;
 }
 
-void Requests ::trim(std ::string &s)
+void requests ::Requests ::trim(std ::string &s)
 {
     ltrim(s);
     rtrim(s);
 }
 
-void Requests ::ltrim(std ::string &s)
+void requests ::Requests ::ltrim(std ::string &s)
 {
     while (check_trim(*s.begin()))
         s.erase(s.begin());
 }
 
-void Requests ::rtrim(std ::string &s)
+void requests ::Requests ::rtrim(std ::string &s)
 {
 
     while (check_trim(*--s.end()))
         s.erase(--s.end());
 }
 
-bool Requests ::check_trim(char s)
+bool requests ::Requests ::check_trim(char s)
 {
     if (s == '\r' || s == '\n' || s == ' ' || s == '\0')
         return true;
     return false;
 }
 
-void Requests ::html_trim(std ::string &s)
+void requests ::Requests ::html_trim(std ::string &s)
 {
     html_ltrim(s);
     html_rtrim(s);
 }
 
 // Recursion Beetch xD
-void Requests ::html_ltrim(std ::string &s)
+void requests ::Requests ::html_ltrim(std ::string &s)
 {
     if (*s.begin() != '<')
     {
@@ -462,7 +461,7 @@ void Requests ::html_ltrim(std ::string &s)
     }
 }
 
-void Requests ::html_rtrim(std ::string &s)
+void requests ::Requests ::html_rtrim(std ::string &s)
 {
     if (*--s.end() != '>')
     {
@@ -471,13 +470,13 @@ void Requests ::html_rtrim(std ::string &s)
     }
 }
 
-void Requests ::json_trim(std ::string &s)
+void requests ::Requests ::json_trim(std ::string &s)
 {
     json_ltrim(s);
     json_rtrim(s);
 }
 
-void Requests ::json_ltrim(std ::string &s)
+void requests ::Requests ::json_ltrim(std ::string &s)
 {
     if (*s.begin() != '{')
     {
@@ -486,7 +485,7 @@ void Requests ::json_ltrim(std ::string &s)
     }
 }
 
-void Requests ::json_rtrim(std ::string &s)
+void requests ::Requests ::json_rtrim(std ::string &s)
 {
     if (*--s.end() != '}')
     {
