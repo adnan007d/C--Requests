@@ -118,11 +118,30 @@ void requests ::Requests ::get(std ::string domain, std::map<std ::string, std :
 
         valread = read(sock, buffer, BUFFER);
 
-        // printf("%s", buffer);
-        // printf("%ld", strlen(buffer));
-
         raw_response += buffer;
-        fflush(stdout);
+
+        if (raw_response.size() > 0)
+        {
+            int s_code = extract_status_code(raw_response);
+            // If status code is redirect (300-399 theoratically)
+            if (s_code >= 300 && s_code <= 399)
+            {
+                std ::regex l("Location: (.*)\r\n");
+                std ::smatch sm;
+
+                std ::string location = "";
+
+                if (std ::regex_search(raw_response, sm, l) && sm.size() > 1)
+                {
+                    location = sm.str(1);
+                }
+                // std ::cout << location << std ::endl;
+
+                // Don't do anything is it doesn't have Location header to define the next url
+                if (!location.empty())
+                    get(location, request_headers, timeout);
+            }
+        }
 
         if (is_end(buffer, valread))
             break;
@@ -168,7 +187,7 @@ std ::string requests ::Requests ::get_response_type()
 void requests ::Requests ::resolve_host(const char *hostname)
 {
     // Removing the protocal string (http, https, etc)
-    std ::regex e("^(.*://)");
+    std ::regex e("(https?://)");
     std ::string __host = std ::regex_replace(hostname, e, "");
 
     // std ::cout << hostname << std ::endl;
@@ -268,7 +287,7 @@ void requests ::Requests ::cook_responses()
     rtrim(response_headers);
 
     //extract status code
-    extract_status_code(response_headers);
+    status_code = extract_status_code(response_headers);
 
     headers = format_headers(response_headers);
 
@@ -332,7 +351,7 @@ std ::vector<std ::string> requests ::Requests ::resplit(const std ::string &s, 
     return parts;
 }
 
-void requests ::Requests ::extract_status_code(std ::string &headers)
+int requests ::Requests ::extract_status_code(std ::string &headers)
 {
 
     // This is a cheap solution
@@ -354,7 +373,7 @@ void requests ::Requests ::extract_status_code(std ::string &headers)
     }
 
     // std ::cout << temp_code_string << std ::endl;
-    status_code = atoi(temp_code_string.c_str());
+    return atoi(temp_code_string.c_str());
 }
 
 std ::map<std ::string, std ::string> requests ::Requests ::format_headers(std ::string &headers)

@@ -8,6 +8,8 @@ int main()
 {
     std ::string url;
     url = "https://www.httpbin.org/headers";
+    url = "https://www.google.com/search?q=Hello";
+
     std ::map<std ::string, std ::string> request_headers;
     request_headers["User-Agent"] = "C++";
 
@@ -16,7 +18,7 @@ int main()
 
     try
     {
-        r.get(url, request_headers);
+        r.get(url, request_headers, 3);
     }
     catch (requests ::timeout_error &e) // Will implement a custom exception class later :)
     {

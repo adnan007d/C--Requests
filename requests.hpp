@@ -34,7 +34,7 @@ namespace requests
         std ::string response_type;
 
         std::vector<std ::string> resplit(const std ::string &, std ::string);
-        void extract_status_code(std ::string &);
+        int extract_status_code(std ::string &);
         std::map<std ::string, std ::string> format_headers(std ::string &);
         void set_content_type();
         void cook_responses();
