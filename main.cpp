@@ -44,8 +44,6 @@ int main()
     for (auto header : headers)
         std ::cout << header.first << ": " << header.second << std ::endl;
 
-    // std ::cout << headers["Content-Type"] << std ::endl;
-
     std ::cout << status_code << std ::endl;
 
     std ::cout << response_type << std ::endl;

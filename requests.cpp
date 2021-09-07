@@ -1,4 +1,3 @@
-#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -88,11 +87,18 @@ void requests ::Requests ::get(std ::string domain, std::map<std ::string, std :
     typedef std ::chrono ::duration<double, std ::ratio<1>> second_;
     std ::chrono ::time_point<clock_> begin_time_ = clock_ ::now();
 
+    // This is a temp header for finding the length of the headers
+    int _response_headers_length = 0;
+    int _content_length = 0;
     while (1)
     {
+
         fds[0].fd = sock;
         fds[0].events = 0;
         fds[0].events |= POLLIN;
+
+        if (_response_headers_length != 0 && _content_length && (raw_response.size() - _response_headers_length) >= _content_length)
+            break;
 
         int pret = poll(fds, 1, timeout * 1000);
 
@@ -110,9 +116,8 @@ void requests ::Requests ::get(std ::string domain, std::map<std ::string, std :
             if (diff > timeout)
             {
                 if (raw_response.empty())
-                    throw std ::logic_error("Tiemout"); // Will implement a Exception Class
-                else
-                    break;
+                    throw requests::timeout_error("Tiemout");
+                break;
             }
         }
 
@@ -122,6 +127,27 @@ void requests ::Requests ::get(std ::string domain, std::map<std ::string, std :
 
         if (raw_response.size() > 0)
         {
+            // Parsing headers
+            std ::smatch sm;
+            std ::regex head("\r\n\r\n");
+
+            // Only if there is a \r\n\r\n (seperator between header and response)
+            // And if we have no headers before
+            if (std ::regex_search(raw_response, sm, head) && _response_headers_length == 0)
+            {
+                std ::cout << "Headers Found " << std ::endl;
+                std ::vector<std ::string> parts = resplit(raw_response, "\r\n\r\n");
+                if (parts.size() > 0)
+                {
+                    std ::string _h = parts.at(0);
+                    std ::regex length("Content-Length: (.*)\r\n");
+                    _response_headers_length = _h.size();
+
+                    if (std ::regex_search(_h, sm, length) && sm.size() > 1)
+                        _content_length = stoi(sm.str(1));
+                }
+            }
+
             int s_code = extract_status_code(raw_response);
             // If status code is redirect (300-399 theoratically)
             if (s_code >= 300 && s_code <= 399)
