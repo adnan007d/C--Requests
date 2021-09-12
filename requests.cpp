@@ -9,41 +9,46 @@
 #include <iostream>
 #include <chrono>
 #include <regex>
-#include <poll.h>
+#include <sys/select.h>
 
 #include "requests.hpp"
+
+int ssl_error_callback(const char *, size_t, void *);
+
 void requests ::Requests ::clear()
 {
-    valread = 0;
-    status_code = 0;
+    this->valread = 0;
+    this->status_code = 0;
+    this->timeout = 0;
+    this->response_headers_length = -1;
+    this->content_length = -1;
 
-    memset(buffer, 0, BUFFER);
-    memset(ip, 0, 15);
-    memset(host, 0, 50);
+    memset(this->buffer, 0, BUFFER);
+    memset(this->ip, 0, 15);
+    memset(this->host, 0, 50);
 
-    content_type.clear();
-    raw_response.clear();
-    response.clear();
-    headers.clear();
-    path = "/";
-
-    close(sock);
+    this->content_type.clear();
+    this->protocol.clear();
+    this->raw_response.clear();
+    this->response.clear();
+    this->headers.clear();
+    this->response_type.clear();
+    this->path = "/";
 }
 
-void requests ::Requests ::setup()
+void requests ::Requests ::setup(int port)
 {
-    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    if ((this->sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
         throw requests ::connection_error("Socket Creation Error");
 
-    serv_aaddr.sin_family = AF_INET;
-    serv_aaddr.sin_port = htons(PORT);
+    this->serv_aaddr.sin_family = AF_INET;
+    this->serv_aaddr.sin_port = htons(port);
 
-    if ((inet_pton(AF_INET, ip, &serv_aaddr.sin_addr)) < 0)
+    if ((inet_pton(AF_INET, ip, &this->serv_aaddr.sin_addr)) < 0)
         throw requests ::connection_error("Invalid Address");
 
-    if (connect(sock, (struct sockaddr *)&serv_aaddr, sizeof(serv_aaddr)) < 0)
+    if (connect(this->sock, (struct sockaddr *)&this->serv_aaddr, sizeof(this->serv_aaddr)) < 0)
         throw requests ::connection_error("Connection Failed");
-    set_content_type();
 }
 
 void requests ::Requests ::get(std ::string domain, std::map<std ::string, std ::string> request_headers, int timeout)
@@ -51,14 +56,346 @@ void requests ::Requests ::get(std ::string domain, std::map<std ::string, std :
 
     clear();
     resolve_host(domain.c_str());
-    setup();
+    set_content_type(); // Sets the content types
 
+    this->timeout = timeout;
+
+    if (this->protocol == "http")
+    {
+        make_http_request(request_headers);
+    }
+    else if (this->protocol == "https")
+    {
+        connect_with_ssl(request_headers);
+    }
+    else
+    {
+        throw requests ::requests_exception("Protocol error");
+    }
+
+    cook_responses();
+}
+
+void requests ::Requests ::make_http_request(std ::map<std ::string, std ::string> request_headers, std ::string data)
+{
     // Setting up headers
+    std ::string _headers = format_request_headers(request_headers);
+
+    setup(80); // Sets up the sockets
+
+    send(this->sock, _headers.c_str(), _headers.size(), 0);
+    memset(this->buffer, 0, BUFFER);
+
+    // To check if we are recieving something
+    fd_set fds;
+
+    struct timeval timeout_struct;
+
+    // This is additional feature to check if the response is still empty after a given timeout
+    // This is from stackoverflow https://stackoverflow.com/questions/728068/how-to-calculate-a-time-difference-in-c
+    std ::chrono ::time_point<clock_> begin_time_ = clock_ ::now();
+
+    while (1)
+    {
+
+        FD_ZERO(&fds);
+        FD_SET(this->sock, &fds);
+
+        timeout_struct.tv_sec = this->timeout;
+        timeout_struct.tv_usec = 0;
+
+        if ((int)this->response_headers_length != -1 && (int)this->content_length != -1 && (raw_response.size() - this->response_headers_length) >= this->content_length)
+            break;
+        if (this->timeout != 0)
+        {
+
+            int pret = select(8, &fds, NULL, NULL, &timeout_struct);
+
+            double diff;
+
+            if (pret == 0)
+            {
+                if (this->raw_response.empty())
+                {
+                    close(this->sock);
+                    throw requests ::timeout_error("Timeout"); // Will implement a Exception Class
+                }
+                break;
+            }
+            else if (pret == 1)
+            {
+                diff = std::chrono ::duration_cast<second_>(clock_ ::now() - begin_time_).count();
+                if (this->timeout != 0 && diff > this->timeout)
+                {
+                    if (this->raw_response.empty())
+                    {
+                        close(this->sock);
+                        throw requests::timeout_error("Tiemout");
+                    }
+                    else
+                    {
+                        close(this->sock);
+                        throw requests ::timeout_error("Timeout occured after fetching " + std::to_string(this->raw_response.size()) + " Bytes");
+                    }
+                }
+            }
+        }
+        this->valread = recv(this->sock, this->buffer, BUFFER, 0);
+
+        append_raw_response(this->raw_response, this->buffer, this->valread);
+
+        if (this->valread <= 0)
+            break;
+
+        // URL Redirection and extracting content length and headers length
+        if (this->raw_response.size() > 0)
+        {
+
+            set_headers_and_content_length();
+            std ::string location = check_redirect();
+
+            if (!location.empty())
+            {
+                get(location, request_headers, this->timeout);
+                return;
+            }
+        }
+
+        // if (is_end(this->buffer, this->valread))
+        // break;
+
+        memset(this->buffer, 0, BUFFER);
+    }
+    close(this->sock);
+}
+
+void requests ::Requests ::connect_with_ssl(std ::map<std ::string, std ::string> request_headers, std ::string data)
+{
+    // Setting up headers
+    std ::string _headers = format_request_headers(request_headers);
+
+    setup(443); // Sets up the sockets
+
+    this->ctx = init_ctx();
+    this->ssl = SSL_new(this->ctx);
+    SSL_set_fd(this->ssl, this->sock);
+
+    // Setting up hostname to connect
+    SSL_set_tlsext_host_name(this->ssl, this->host);
+
+    if (SSL_connect(this->ssl) <= 0)
+    {
+        ERR_print_errors_cb(&ssl_error_callback, NULL);
+    }
+
+    SSL_write(this->ssl, _headers.c_str(), _headers.size());
+
+    memset(this->buffer, 0, BUFFER);
+
+    fd_set sockfds;
+
+    struct timeval timeout_struct;
+
+    // This is additional feature to check if the response is still empty after a given timeout
+    // This is from stackoverflow https://stackoverflow.com/questions/728068/how-to-calculate-a-time-difference-in-c
+    std ::chrono ::time_point<clock_> begin_time_ = clock_ ::now();
+
+    while (1)
+    {
+        FD_ZERO(&sockfds);
+        FD_SET(sock, &sockfds);
+
+        timeout_struct.tv_sec = this->timeout;
+        timeout_struct.tv_usec = 0;
+
+        if ((int)this->response_headers_length != -1 && (int)this->content_length != -1 && (raw_response.size() - this->response_headers_length) >= this->content_length)
+            break;
+
+        if (this->timeout != 0)
+        {
+
+            int sret = select(8, &sockfds, NULL, NULL, &timeout_struct);
+
+            double diff;
+
+            if (sret == 0)
+            {
+                if (this->raw_response.empty())
+                {
+                    close(this->sock);
+                    SSL_CTX_free(this->ctx);
+                    throw requests ::timeout_error("Timeout"); // Will implement a Exception Class
+                }
+                break;
+            }
+            else if (sret == 1)
+            {
+                diff = std::chrono ::duration_cast<second_>(clock_ ::now() - begin_time_).count();
+                if (diff > this->timeout)
+                {
+                    if (this->raw_response.empty())
+                    {
+                        close(this->sock);
+                        SSL_CTX_free(this->ctx);
+                        throw requests::timeout_error("Tiemout");
+                    }
+                    else
+                    {
+                        close(this->sock);
+                        SSL_CTX_free(this->ctx);
+                        throw requests ::timeout_error("Timeout occured after fetching " + std::to_string(this->raw_response.size()) + " Bytes");
+                    }
+                }
+            }
+        }
+
+        this->valread = SSL_read(this->ssl, this->buffer, BUFFER);
+
+        append_raw_response(this->raw_response, this->buffer, this->valread);
+        if (this->valread <= 0)
+            break;
+
+        // URL Redirection and extracting content length and headers length
+        if (this->raw_response.size() > 0)
+        {
+
+            set_headers_and_content_length();
+
+            std ::string location = check_redirect();
+            if (!location.empty())
+            {
+                close(this->sock);
+                SSL_CTX_free(this->ctx);
+                get(location, request_headers, this->timeout);
+                return;
+            }
+        }
+
+        // if (is_end(this->buffer, this->valread) && this->raw_response.size() != this->response_headers_length)
+        // break;
+
+        memset(this->buffer, 0, BUFFER);
+    }
+    close(this->sock);
+    SSL_CTX_free(this->ctx);
+}
+
+SSL_CTX *requests ::Requests ::init_ctx()
+{
+    SSL_library_init();
+
+    const SSL_METHOD *method;
+    SSL_CTX *ctx;
+    OpenSSL_add_all_algorithms();
+    SSL_load_error_strings();
+    method = TLS_client_method();
+    ctx = SSL_CTX_new(method);
+    if (ctx == NULL)
+    {
+        // requests::Requests ::Error = "CTX Creation Error";
+        ERR_print_errors_cb(&ssl_error_callback, NULL);
+    }
+
+    return ctx;
+}
+
+void requests ::Requests ::set_headers_and_content_length()
+{
+    // Parsing headers
+    std ::smatch sm;
+    std ::regex head("\r\n\r\n");
+
+    // Only if there is a \r\n\r\n (seperator between header and response)
+    // And if we have no headers before
+    if (std ::regex_search(this->raw_response, sm, head) && (int)this->response_headers_length == -1)
+    {
+        // std ::cout << "Headers Found " << std ::endl;
+        std ::vector<std ::string> parts = resplit(this->raw_response, "\r\n\r\n");
+        if (parts.size() > 0)
+        {
+            std ::string _h = parts.at(0);
+            std ::regex length("Content-Length: (.*)\r\n", std ::regex_constants ::icase);
+            this->response_headers_length = _h.size() + 4; // Adding 4 as we strip \r\n\r\n
+
+            if (std ::regex_search(_h, sm, length) && sm.size() > 1)
+                this->content_length = stoi(sm.str(1));
+        }
+    }
+}
+
+std::string requests ::Requests ::check_redirect()
+{
+    int s_code = extract_status_code(this->raw_response);
+    std ::string location = "";
+
+    // If status code is redirect (300-399 theoratically)
+    if (s_code >= 300 && s_code <= 399)
+    {
+        std ::regex l("Location: (.*)\r\n", std ::regex_constants ::icase);
+        std ::smatch sm;
+
+        if (std ::regex_search(this->raw_response, sm, l) && sm.size() > 1)
+        {
+            location = sm.str(1);
+        }
+        return location;
+    }
+    return location;
+}
+
+void requests ::Requests ::append_raw_response(std ::string &s, char *buffer, int buffer_len)
+{
+    for (int i = 0; i < buffer_len; ++i)
+    {
+        s.push_back(buffer[i]);
+    }
+}
+
+int ssl_error_callback(const char *str, size_t len, void *u)
+{
+    throw requests ::requests_exception(/*requests ::Requests ::Error + ":\n"+*/ str);
+}
+
+std ::string requests ::Requests ::get_raw_response()
+{
+    this->raw_response.shrink_to_fit();
+    return this->raw_response;
+}
+
+std::string requests ::Requests ::get_response()
+{
+    // Should I do this ?
+    // I am not sure but I think it will help to save space
+    this->response.shrink_to_fit();
+    // std ::cout << response.size() << std ::endl;
+    return this->response;
+}
+
+std ::map<std ::string, std ::string> requests ::Requests ::get_headers()
+{
+    return this->headers;
+}
+
+int requests ::Requests ::get_status_code()
+{
+    return this->status_code;
+}
+
+std ::string requests ::Requests ::get_response_type()
+{
+    this->response_type.shrink_to_fit();
+    return this->response_type;
+}
+
+std ::string requests ::Requests::format_request_headers(std ::map<std ::string, std ::string> request_headers)
+{
     std ::string _headers;
 
-    _headers += "GET " + path + " HTTP/1.1\r\n";
+    _headers += "GET " + this->path + " HTTP/1.1\r\n";
 
-    _headers += "HOST: " + std ::string(host) + "\r\n";
+    _headers += "HOST: " + std ::string(this->host) + "\r\n";
+
+    _headers += "Connection: Close\r\n";
 
     for (auto &x : request_headers)
     {
@@ -72,152 +409,27 @@ void requests ::Requests ::get(std ::string domain, std::map<std ::string, std :
 
     _headers += "\r\n"; // Requests end with \r\n\r\n
 
-    // printf("%s\n\n", _headers.c_str());
-    send(sock, _headers.c_str(), _headers.size(), 0);
-    memset(buffer, 0, BUFFER);
-
-    // To check if we are recieving something
-    struct pollfd fds[1];
-
-    // int timeout = 5; // default timeout will be 5 seconds
-
-    // This is additional feature to check if the response is still empty after a given timeout
-    // This is from stackoverflow https://stackoverflow.com/questions/728068/how-to-calculate-a-time-difference-in-c
-    typedef std ::chrono ::high_resolution_clock clock_;
-    typedef std ::chrono ::duration<double, std ::ratio<1>> second_;
-    std ::chrono ::time_point<clock_> begin_time_ = clock_ ::now();
-
-    // This is a temp header for finding the length of the headers
-    int _response_headers_length = 0;
-    int _content_length = 0;
-    while (1)
-    {
-
-        fds[0].fd = sock;
-        fds[0].events = 0;
-        fds[0].events |= POLLIN;
-
-        if (_response_headers_length != 0 && _content_length && (raw_response.size() - _response_headers_length) >= _content_length)
-            break;
-
-        int pret = poll(fds, 1, timeout * 1000);
-
-        double diff;
-
-        if (pret == 0)
-        {
-            if (raw_response.empty())
-                throw requests ::timeout_error("Timeout"); // Will implement a Exception Class
-            break;
-        }
-        else if (pret == 1)
-        {
-            diff = std::chrono ::duration_cast<second_>(clock_ ::now() - begin_time_).count();
-            if (diff > timeout)
-            {
-                if (raw_response.empty())
-                    throw requests::timeout_error("Tiemout");
-                break;
-            }
-        }
-
-        valread = read(sock, buffer, BUFFER);
-
-        raw_response += buffer;
-
-        if (raw_response.size() > 0)
-        {
-            // Parsing headers
-            std ::smatch sm;
-            std ::regex head("\r\n\r\n");
-
-            // Only if there is a \r\n\r\n (seperator between header and response)
-            // And if we have no headers before
-            if (std ::regex_search(raw_response, sm, head) && _response_headers_length == 0)
-            {
-                std ::cout << "Headers Found " << std ::endl;
-                std ::vector<std ::string> parts = resplit(raw_response, "\r\n\r\n");
-                if (parts.size() > 0)
-                {
-                    std ::string _h = parts.at(0);
-                    std ::regex length("Content-Length: (.*)\r\n");
-                    _response_headers_length = _h.size();
-
-                    if (std ::regex_search(_h, sm, length) && sm.size() > 1)
-                        _content_length = stoi(sm.str(1));
-                }
-            }
-
-            int s_code = extract_status_code(raw_response);
-            // If status code is redirect (300-399 theoratically)
-            if (s_code >= 300 && s_code <= 399)
-            {
-                std ::regex l("Location: (.*)\r\n");
-                std ::smatch sm;
-
-                std ::string location = "";
-
-                if (std ::regex_search(raw_response, sm, l) && sm.size() > 1)
-                {
-                    location = sm.str(1);
-                }
-                // std ::cout << location << std ::endl;
-
-                // Don't do anything is it doesn't have Location header to define the next url
-                if (!location.empty())
-                    get(location, request_headers, timeout);
-            }
-        }
-
-        if (is_end(buffer, valread))
-            break;
-
-        memset(buffer, 0, BUFFER);
-    }
-    close(sock);
-
-    cook_responses();
-}
-
-std ::string requests ::Requests ::get_raw_response()
-{
-    raw_response.shrink_to_fit();
-    return raw_response;
-}
-
-std::string requests ::Requests ::get_response()
-{
-    // Should I do this ?
-    // I am not sure but I think it will help to save space
-    response.shrink_to_fit();
-    // std ::cout << response.size() << std ::endl;
-    return response;
-}
-
-std ::map<std ::string, std ::string> requests ::Requests ::get_headers()
-{
-    return headers;
-}
-
-int requests ::Requests ::get_status_code()
-{
-    return status_code;
-}
-
-std ::string requests ::Requests ::get_response_type()
-{
-    response_type.shrink_to_fit();
-    return response_type;
+    return _headers;
 }
 
 void requests ::Requests ::resolve_host(const char *hostname)
 {
     // Removing the protocal string (http, https, etc)
-    std ::regex e("(https?://)");
-    std ::string __host = std ::regex_replace(hostname, e, "");
 
-    // std ::cout << hostname << std ::endl;
-    // std ::cout << __host << std ::endl;
+    std ::regex e("(^(https?)://)");
+    std ::cmatch cm;
+
+    std ::string __host;
+    if (std ::regex_search(hostname, cm, e) && cm.size() > 0)
+    {
+        __host = std ::regex_replace(hostname, e, "");
+        this->protocol = cm.str(2);
+    }
+    else
+    {
+        // TODO: Add a exception class
+        throw requests ::requests_exception("Invalid url: Must contain http/https protocols");
+    }
 
     // Now getting the path i.e anything after / like www.google.com/search
     // so we remove search and store it into a path variable
@@ -226,20 +438,20 @@ void requests ::Requests ::resolve_host(const char *hostname)
     if (std ::regex_search(__host, sm, f) && sm.size() > 1)
     {
         // This is the path
-        path += sm.str(1);
+        this->path += sm.str(1);
 
         // replacing the path from the host
         __host = std ::regex_replace(__host.c_str(), f, "");
     }
 
     // Copying the std :: string host to c string host
-    strncpy(host, __host.c_str(), __host.size());
+    strncpy(this->host, __host.c_str(), __host.size());
 
     struct hostent *he;
     struct in_addr **ip_addr;
 
     // If this returns NULL means No Internet or invalid domain
-    if ((he = gethostbyname(host)) == NULL)
+    if ((he = gethostbyname(this->host)) == NULL)
     {
         throw requests ::connection_error("Couldn't resolve host");
     }
@@ -251,7 +463,7 @@ void requests ::Requests ::resolve_host(const char *hostname)
     if (ip_addr)
     {
         // Copying the ip address into ip char array
-        strcpy(ip, inet_ntoa(*ip_addr[0]));
+        strcpy(this->ip, inet_ntoa(*ip_addr[0]));
     }
 }
 
@@ -285,23 +497,27 @@ void requests ::Requests ::substr(const char *str, char *s, int start, int lengt
 
 void requests ::Requests ::cook_responses()
 {
+    // Do nothing when raw response is not filled
+    if (this->raw_response.size() <= 0)
+        return;
+
     // Trimming the header therefore ltrim()
-    ltrim(raw_response);
+    ltrim(this->raw_response);
 
     // Splitting header and response
-    std ::vector<std ::string> parts = resplit(raw_response, "\r\n\r\n");
+    std ::vector<std ::string> parts = resplit(this->raw_response, "\r\n\r\n");
 
     std ::string response_headers = "";
     if (parts.size() == 1)
     {
         // This mainly occurs during permanent redirect
         response_headers = parts.at(0);
-        response = raw_response;
+        // this->response = this->raw_response;
     }
     else if (parts.size() == 2) // This is the common result
     {
         response_headers = parts.at(0);
-        response = parts.at(1);
+        this->response = parts.at(1);
     }
     else
     {
@@ -313,26 +529,29 @@ void requests ::Requests ::cook_responses()
     rtrim(response_headers);
 
     //extract status code
-    status_code = extract_status_code(response_headers);
+    this->status_code = extract_status_code(response_headers);
 
-    headers = format_headers(response_headers);
+    this->headers = format_headers(response_headers);
 
-    response_type = check_response_type(headers);
+    this->response_type = check_response_type(headers);
 
-    if (response_type == "html")
-        // Trimming everything before < (start) and after > (end)
-        html_trim(response);
-    else if (response_type == "json")
-        json_trim(response);
-    else
-        trim(response);
+    if (this->response.size() > 0)
+    {
+        if (this->response_type == "html")
+            // Trimming everything before < (start) and after > (end)
+            html_trim(this->response);
+        else if (this->response_type == "json")
+            json_trim(this->response);
+        else
+            trim(this->response);
+    }
 }
 
 void requests ::Requests ::set_content_type()
 {
-    content_type.insert(std ::make_pair("html", "text/html"));
-    content_type.insert(std ::make_pair("json", "application/json"));
-    content_type.insert(std ::make_pair("plain", "text/plain"));
+    this->content_type.insert(std ::make_pair("html", "text/html"));
+    this->content_type.insert(std ::make_pair("json", "application/json"));
+    this->content_type.insert(std ::make_pair("plain", "text/plain"));
 }
 
 std ::string requests ::Requests ::check_response_type(std ::map<std ::string, std::string> headers)
@@ -344,7 +563,6 @@ std ::string requests ::Requests ::check_response_type(std ::map<std ::string, s
         {
             return header.first;
         }
-        // std ::cout << headers["Content-Type"].substr(0, type_len) << std ::endl;
     }
     std ::string t = "";
     for (auto x : headers["Content-Type"])
@@ -371,9 +589,6 @@ std ::vector<std ::string> requests ::Requests ::resplit(const std ::string &s, 
         ++iter;
     }
 
-    // headers = *iter;
-    // ++iter;
-    // response = *iter;
     return parts;
 }
 
@@ -398,7 +613,6 @@ int requests ::Requests ::extract_status_code(std ::string &headers)
         ++i;
     }
 
-    // std ::cout << temp_code_string << std ::endl;
     return atoi(temp_code_string.c_str());
 }
 
@@ -411,12 +625,7 @@ std ::map<std ::string, std ::string> requests ::Requests ::format_headers(std :
     }
     headers.erase(headers.begin());
 
-    // std ::cout << headers << std ::endl;
-    // for (auto &head : headers)
-    //     std ::cout << head.first << ": " << head.second << std ::endl;
-
     std ::vector<std ::string> _headers = resplit(headers, "\r\n");
-    // std ::cout << _headers.size() << std ::endl;
 
     std ::map<std ::string, std::string> real_headers;
 
@@ -452,7 +661,6 @@ std ::map<std ::string, std ::string> requests ::Requests ::format_headers(std :
 
 std ::string requests ::Requests ::join(std ::vector<std ::string> vec, std ::string sep)
 {
-    std ::cout << "Someone called me: " << vec.at(0) << std ::endl;
     std ::string s = "";
     for (auto v : vec)
     {
@@ -485,7 +693,7 @@ void requests ::Requests ::rtrim(std ::string &s)
 
 bool requests ::Requests ::check_trim(char s)
 {
-    if (s == '\r' || s == '\n' || s == ' ' || s == '\0')
+    if (s == '\r' || s == '\n' || s == ' ')
         return true;
     return false;
 }

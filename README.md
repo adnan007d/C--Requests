@@ -1,5 +1,8 @@
 # C++ Requests
 
+## Dependencies
+> - ![openssl](https://github.com/openssl/openssl) (For ssl (https) connection)
+
 ## Methods
 - get
 - More will be added later
@@ -10,11 +13,14 @@
 ## TODO
 > - URL encoding for path of passed url
 
+## New
+> - OpenSSL support for https requests
+
 ## Documentation
 ### GET
 >
 >```C++
->requests :: Requests :: get(const char *domain, std :: map<std :: string, std :: string> >request_headers = {}, int timeout = 5)
+>requests :: Requests :: get(const char *domain, std :: map<std :: string, std :: string> >request_headers = {}, int timeout = 0)
 >```
 > throws an exception requests :: requests_exception see [exception](#exception) for more derived exceptions
 
@@ -125,9 +131,8 @@ int main()
 
     try
     {
-        // Default timeout is 5 seconds and make sure to add empty brace brackets as seconds argument is for headers
         // You can also pass custom headers in it too if you want
-        r.get("https://www.google.com/Hello World", {}, 10);
+        r.get("https://www.google.com/Hello World", {}, 2);
     }
     catch(requests :: timeout_error &e) // Will implement a custom exception class later
     {
@@ -153,7 +158,7 @@ int main()
 ## Compile and run
 You can use g++ compiler with this command to run
 ```bash
-g++ requests.hpp requests.cpp main.cpp -o main
+g++ -std=c++17 requests.hpp requests.cpp main.cpp -o main -I/path/to/your/ssl/incude -L/path/to/your/ssl/linker/directory -lcrypto -lssl -Wall
 ```
 Or <br />
 you can use the Makefile (You would want to customize it according to your file name) by running

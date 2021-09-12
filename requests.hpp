@@ -7,8 +7,10 @@
 #include <regex>
 #include <vector>
 #include <map>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <chrono>
 
-#define PORT 80
 #define BUFFER 4096
 
 namespace requests
@@ -24,6 +26,12 @@ namespace requests
         int status_code;
         char buffer[BUFFER];
         char ip[15]; // MAX LENGTH OF IP ADDRESS
+        int timeout = 0;
+
+        long unsigned int response_headers_length = -1;
+        long unsigned int content_length = -1;
+
+        std ::string protocol;
 
         std ::map<std ::string, std ::string> content_type;
 
@@ -39,6 +47,22 @@ namespace requests
         void set_content_type();
         void cook_responses();
         std ::string check_response_type(std ::map<std ::string, std::string>);
+        std ::string format_request_headers(std ::map<std ::string, std ::string>);
+        void append_raw_response(std ::string &, char *, int);
+        void set_headers_and_content_length();
+        std ::string check_redirect();
+
+        void make_http_request(std ::map<std ::string, std ::string>, std ::string = "");
+
+        typedef std ::chrono ::high_resolution_clock clock_;
+        typedef std ::chrono ::duration<double, std ::ratio<1>> second_;
+
+        //SSL
+        SSL_CTX *ctx;
+        SSL *ssl;
+        SSL_CTX *init_ctx();
+        void connect_with_ssl(std ::map<std ::string, std ::string>, std ::string = "");
+        // int ssl_error_callback(const char *str, size_t len, void *u);
 
     public:
         Requests()
@@ -49,10 +73,11 @@ namespace requests
         {
             clear();
         };
+        // static std ::string Error;
 
         void print_error(const char *);
         int is_end(const char *, const int);
-        void setup();
+        void setup(int);
         void resolve_host(const char *);
 
         // utils
@@ -79,7 +104,7 @@ namespace requests
         std ::string get_response_type();
 
         // http methods
-        void get(std ::string, std ::map<std ::string, std ::string> = {}, int = 5); // default timeout will be 5
+        void get(std ::string, std ::map<std ::string, std ::string> = {}, int = 0);
     };
 
     // Exception Classes
