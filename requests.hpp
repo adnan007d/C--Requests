@@ -31,6 +31,8 @@ namespace requests
         long unsigned int response_headers_length = -1;
         long unsigned int content_length = -1;
 
+        bool postDataEncoded = false;
+
         std ::string protocol;
 
         std ::map<std ::string, std ::string> content_type;
@@ -47,12 +49,14 @@ namespace requests
         void set_content_type();
         void cook_responses();
         std ::string check_response_type(std ::map<std ::string, std::string>);
-        std ::string format_request_headers(std ::map<std ::string, std ::string>);
+        std ::string format_request_headers(std::string method, std ::map<std ::string, std ::string> requests_headers, std::string data);
         void append_raw_response(std ::string &, char *, int);
         void set_headers_and_content_length();
         std ::string check_redirect();
-
-        void make_http_request(std ::map<std ::string, std ::string>, std ::string = "");
+        std::string format_post_data(std::map<std::string, std::string> data);
+        std::string get_protocol(std::string domain);
+        void make_request(std::string domain, std::string method, std::map<std ::string, std ::string>, std ::string = "");
+        void connect_without_ssl(std::string domain, std::string method, std::map<std ::string, std ::string>, std ::string = "");
 
         typedef std ::chrono ::high_resolution_clock clock_;
         typedef std ::chrono ::duration<double, std ::ratio<1>> second_;
@@ -61,7 +65,7 @@ namespace requests
         SSL_CTX *ctx;
         SSL *ssl;
         SSL_CTX *init_ctx();
-        void connect_with_ssl(std ::map<std ::string, std ::string>, std ::string = "");
+        void connect_with_ssl(std::string domain, std::string method, std::map<std ::string, std ::string>, std ::string = "");
         // int ssl_error_callback(const char *str, size_t len, void *u);
 
     public:
@@ -91,6 +95,7 @@ namespace requests
         void json_trim(std ::string &);
         void json_ltrim(std ::string &);
         void json_rtrim(std ::string &);
+        std::string url_encode(std::string_view s);
 
         std ::string join(std ::vector<std ::string>, std ::string);
         bool check_trim(char);
@@ -104,7 +109,9 @@ namespace requests
         std ::string get_response_type();
 
         // http methods
-        void get(std ::string, std ::map<std ::string, std ::string> = {}, int = 0);
+        void get(std ::string url, std ::map<std ::string, std ::string> request_headers = {}, int timeout = 0);
+        void post(std ::string url, std ::map<std ::string, std ::string> data, std::map<std ::string, std ::string> request_headers = {}, int timeout = 0);
+        void post(std ::string url, std::string data = "", std ::map<std ::string, std ::string> request_headers = {}, int timeout = 0);
     };
 
     // Exception Classes
